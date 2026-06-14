@@ -1,18 +1,50 @@
 # Projection Mapping Lab
 
-Web camera + OpenCV.js + Matter.js prototype for realtime projection-mapping collision experiments.
+Webカメラで検出した物理オブジェクトを、Matter.jsの静的コリジョンとして使うリアルタイム・プロジェクションマッピング実験アプリです。
 
-## Run
+OpenCV.jsでHSV色検出を行い、検出したマーカーの輪郭を投影キャンバス座標へ変換して、ボールが跳ね返る物理デモとして表示します。
+
+## セットアップ
 
 ```bash
 npm install
+```
+
+## 起動
+
+```bash
 npm run dev -- --port 5173
 ```
 
-Open:
+ブラウザで開きます。
 
 ```text
 http://localhost:5173/
 ```
 
-If camera access is unavailable, the app automatically falls back to demo mode.
+## 使い方
+
+- カメラが使える環境では、ブラウザのカメラ許可をONにします。
+- カメラが使えない場合は、自動でデモモードに切り替わります。
+- `Hue`、`許容幅`、`彩度`、`明度` のスライダーで検出するマーカー色を調整します。
+- `4点補正` でカメラ映像上の4隅を順番にクリックすると、投影座標への補正を行います。
+- `X`、`Y` の投影オフセットで、投影位置の残ズレを微調整します。
+- `ボール` で物理デモのボール位置をリセットできます。
+
+## 主な技術
+
+- Vite
+- React
+- TypeScript
+- OpenCV.js
+- Matter.js
+- Canvas API
+
+## デバッグ
+
+```bash
+npm run build
+npm audit --omit=dev
+```
+
+開発時点では、ビルド成功と脆弱性0件を確認しています。
