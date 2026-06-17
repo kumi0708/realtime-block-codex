@@ -361,14 +361,32 @@ function App() {
   const [fps, setFps] = useState(0);
   const [status, setStatus] = useState("OpenCV.jsを読み込み中");
   const colorFileInputRef = useRef<HTMLInputElement | null>(null);
+  const calibFileInputRef = useRef<HTMLInputElement | null>(null);
   const [hue, setHue] = useState(DEFAULT_COLOR_SETTINGS.hue);
   const [tolerance, setTolerance] = useState(DEFAULT_COLOR_SETTINGS.tolerance);
   const [saturation, setSaturation] = useState(DEFAULT_COLOR_SETTINGS.saturation);
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
+  const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
+  const [interactionArea, setInteractionArea] = useState({ x: 160, y: 90, width: 960, height: 540 });
+  const [showInteractionArea, setShowInteractionArea] = useState(true);
+  const interactionAreaCorners: Point[] = useMemo(
+    () => [
+      { x: interactionArea.x, y: interactionArea.y },
+      { x: interactionArea.x + interactionArea.width, y: interactionArea.y },
+      { x: interactionArea.x + interactionArea.width, y: interactionArea.y + interactionArea.height },
+      { x: interactionArea.x, y: interactionArea.y + interactionArea.height },
+    ],
+    [interactionArea],
+  );
   const homography = useMemo(
-    () => computeHomography(cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints, projectorCorners),
-    [cameraPoints],
+    () =>
+      computeHomography(
+        cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints,
+        calibrationMode === "full" ? projectorCorners : interactionAreaCorners,
+      ),
+    [cameraPoints, calibrationMode, interactionAreaCorners],
   );
   const playAreaBounds = useMemo(() => {
     const roi = cameraRoi ?? { x: 0, y: 0, width: CAMERA_WIDTH, height: CAMERA_HEIGHT };
@@ -492,6 +510,9 @@ function App() {
       } else {
         drawProjectorBallsOnly(outCtx, engineRef.current, flipX, flipY);
       }
+      if (calibrationMode === "partial" && showInteractionArea) {
+        drawInteractionAreaBorder(outCtx, interactionArea, flipX, flipY);
+      }
       if (tool === "calibrate") {
         drawCalibrationMarkers(outCtx, flipX, flipY);
       }
@@ -500,7 +521,7 @@ function App() {
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi);
+        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
         renderOutputWindow();
         return;
       }
@@ -523,7 +544,7 @@ function App() {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi);
+      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
       drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool, cameraRoi, detectAreaStart);
       renderOutputWindow();
 
@@ -539,6 +560,8 @@ function App() {
     frameRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frameRef.current);
   }, [
+    calibrationMode,
+    cameraOverlayOpacity,
     cameraPoints,
     cameraReady,
     cameraRoi,
@@ -550,10 +573,12 @@ function App() {
     flipY,
     homography,
     hue,
+    interactionArea,
     offset,
     playAreaBounds,
     running,
     saturation,
+    showInteractionArea,
     testPattern,
     tolerance,
     value,
@@ -718,6 +743,39 @@ function App() {
       .catch(() => {
         setStatus("色検出設定の読み込みに失敗しました");
       });
+  };
+
+  const saveCalibrationSettings = () => {
+    const settings = { mode: calibrationMode, cameraPoints, interactionArea, offset, showInteractionArea };
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "calibration-settings.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadCalibrationSettings = () => {
+    calibFileInputRef.current?.click();
+  };
+
+  const handleCalibFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    file
+      .text()
+      .then((text) => {
+        const parsed = JSON.parse(text);
+        if (parsed.mode === "full" || parsed.mode === "partial") setCalibrationMode(parsed.mode);
+        if (Array.isArray(parsed.cameraPoints) && parsed.cameraPoints.length === 4) setCameraPoints(parsed.cameraPoints);
+        if (parsed.interactionArea) setInteractionArea(parsed.interactionArea);
+        if (parsed.offset) setOffset(parsed.offset);
+        if (typeof parsed.showInteractionArea === "boolean") setShowInteractionArea(parsed.showInteractionArea);
+        setStatus("キャリブレーション設定を読み込みました");
+      })
+      .catch(() => setStatus("キャリブレーション設定の読み込みに失敗しました"));
   };
 
   const handleCameraClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -919,6 +977,88 @@ function App() {
           <Metric label="入力" value={demoMode ? "DEMO" : cameraReady ? "CAM" : "OFF"} />
         </div>
 
+        <ControlGroup title="認識モード">
+          <div className="button-row">
+            <button
+              type="button"
+              className={calibrationMode === "full" ? "active" : ""}
+              onClick={() => setCalibrationMode("full")}
+            >
+              全体認識
+            </button>
+            <button
+              type="button"
+              className={calibrationMode === "partial" ? "active" : ""}
+              onClick={() => setCalibrationMode("partial")}
+            >
+              部分認識
+            </button>
+          </div>
+          <p className="mode-desc">
+            {calibrationMode === "full"
+              ? "カメラ4点 → プロジェクター全体"
+              : "カメラ4点 → Interaction Area"}
+          </p>
+          <div className="button-row">
+            <button type="button" onClick={saveCalibrationSettings}>
+              <Save size={16} />
+              保存
+            </button>
+            <button type="button" onClick={loadCalibrationSettings}>
+              <Upload size={16} />
+              読み込み
+            </button>
+            <input
+              ref={calibFileInputRef}
+              type="file"
+              accept="application/json"
+              onChange={handleCalibFileChange}
+              className="hidden-file-input"
+            />
+          </div>
+        </ControlGroup>
+
+        {calibrationMode === "partial" && (
+          <ControlGroup title="Interaction Area">
+            <Range
+              label="X"
+              min={0}
+              max={PROJECTOR_WIDTH - 100}
+              value={interactionArea.x}
+              onChange={(x) => setInteractionArea((a) => ({ ...a, x }))}
+            />
+            <Range
+              label="Y"
+              min={0}
+              max={PROJECTOR_HEIGHT - 100}
+              value={interactionArea.y}
+              onChange={(y) => setInteractionArea((a) => ({ ...a, y }))}
+            />
+            <Range
+              label="幅"
+              min={100}
+              max={PROJECTOR_WIDTH}
+              value={interactionArea.width}
+              onChange={(width) => setInteractionArea((a) => ({ ...a, width }))}
+            />
+            <Range
+              label="高さ"
+              min={100}
+              max={PROJECTOR_HEIGHT}
+              value={interactionArea.height}
+              onChange={(height) => setInteractionArea((a) => ({ ...a, height }))}
+            />
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={showInteractionArea}
+                onChange={(e) => setShowInteractionArea(e.target.checked)}
+              />
+              エリア枠を表示
+            </label>
+          </ControlGroup>
+        )}
+
         <ControlGroup title="色検出">
           <Range label="Hue" min={0} max={179} value={hue} onChange={setHue} />
           <Range label="許容幅" min={4} max={45} value={tolerance} onChange={setTolerance} />
@@ -954,6 +1094,17 @@ function App() {
         <ControlGroup title="投影オフセット">
           <Range label="X" min={-160} max={160} value={offset.x} onChange={(x) => setOffset((point) => ({ ...point, x }))} />
           <Range label="Y" min={-120} max={120} value={offset.y} onChange={(y) => setOffset((point) => ({ ...point, y }))} />
+        </ControlGroup>
+
+        <ControlGroup title="カメラオーバーレイ">
+          <FloatRange
+            label="不透明度"
+            min={0}
+            max={1}
+            step={0.05}
+            value={cameraOverlayOpacity}
+            onChange={setCameraOverlayOpacity}
+          />
         </ControlGroup>
       </section>
 
@@ -1047,6 +1198,37 @@ function Range({
       <span>{label}</span>
       <input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
       <output>{Math.round(value)}</output>
+    </label>
+  );
+}
+
+function FloatRange({
+  label,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="range-row">
+      <span>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <output>{value.toFixed(2)}</output>
     </label>
   );
 }
@@ -1191,11 +1373,36 @@ function drawProjector(
   tool: Tool,
   cameraPoints: Point[],
   cameraRoi: Rect | null,
+  video?: HTMLVideoElement | null,
+  cameraOverlayOpacity?: number,
+  calibrationMode?: "full" | "partial",
+  interactionArea?: { x: number; y: number; width: number; height: number },
+  showInteractionArea?: boolean,
 ) {
   const calibrating = tool === "calibrate";
   ctx.clearRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
   ctx.fillStyle = "#0e1219";
   ctx.fillRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+
+  if (video && video.readyState >= 2 && (cameraOverlayOpacity ?? 0) > 0) {
+    ctx.save();
+    ctx.globalAlpha = cameraOverlayOpacity ?? 0;
+    ctx.drawImage(video, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+    ctx.restore();
+  }
+
+  if (calibrationMode === "partial" && showInteractionArea && interactionArea) {
+    ctx.save();
+    ctx.strokeStyle = "#ff6b35";
+    ctx.setLineDash([14, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeRect(interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ff6b35";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText("Interaction Area", interactionArea.x + 8, interactionArea.y + 20);
+    ctx.restore();
+  }
 
   const grid = 80;
   ctx.strokeStyle = "rgba(255,255,255,0.055)";
@@ -1316,6 +1523,22 @@ function drawTestPattern(ctx: CanvasRenderingContext2D) {
   ctx.strokeRect(2, 2, PROJECTOR_WIDTH - 4, PROJECTOR_HEIGHT - 4);
 }
 
+function drawInteractionAreaBorder(
+  ctx: CanvasRenderingContext2D,
+  area: { x: number; y: number; width: number; height: number },
+  flipX: boolean,
+  flipY: boolean,
+) {
+  ctx.save();
+  ctx.translate(flipX ? PROJECTOR_WIDTH : 0, flipY ? PROJECTOR_HEIGHT : 0);
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.strokeStyle = "#ff6b35";
+  ctx.setLineDash([14, 8]);
+  ctx.lineWidth = 3;
+  ctx.strokeRect(area.x, area.y, area.width, area.height);
+  ctx.restore();
+}
+
 function drawCalibrationMarkers(ctx: CanvasRenderingContext2D, flipX: boolean, flipY: boolean) {
   projectorCorners.forEach((point, index) => {
     const px = (flipX ? PROJECTOR_WIDTH - point.x : point.x) || 24;
@@ -1335,8 +1558,18 @@ function drawProjectorBallsOnly(
   engine: Matter.Engine | null,
   flipX: boolean,
   flipY: boolean,
+  video?: HTMLVideoElement | null,
+  cameraOverlayOpacity?: number,
 ) {
   ctx.clearRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+
+  if (video && video.readyState >= 2 && (cameraOverlayOpacity ?? 0) > 0) {
+    ctx.save();
+    ctx.globalAlpha = cameraOverlayOpacity ?? 0;
+    ctx.drawImage(video, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+    ctx.restore();
+  }
+
   if (!engine) return;
 
   ctx.save();
