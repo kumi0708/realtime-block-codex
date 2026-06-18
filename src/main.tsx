@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import Matter from "matter-js";
 import {
   Camera,
+  ChevronDown,
   CirclePlus,
   Crosshair,
   Eraser,
@@ -345,6 +346,10 @@ function App() {
   const [flipX, setFlipX] = useState(false);
   const [flipY, setFlipY] = useState(false);
   const [testPattern, setTestPattern] = useState(false);
+  const [ballSpawnEnabled, setBallSpawnEnabled] = useState(false);
+  const [ballSpawnX, setBallSpawnX] = useState(Math.round(PROJECTOR_WIDTH / 2));
+  const [ballSpawnY, setBallSpawnY] = useState(40);
+  const [ballSpawnIntervalSec, setBallSpawnIntervalSec] = useState(3.0);
   const [tool, setTool] = useState<Tool>("none");
   const [cameraPoints, setCameraPoints] = useState<Point[]>(defaultCameraPoints);
   const [markers, setMarkers] = useState<Marker[]>([]);
@@ -661,6 +666,21 @@ function App() {
     Matter.World.add(engineRef.current.world, ball);
   };
 
+  useEffect(() => {
+    if (!ballSpawnEnabled || !running) return;
+    const id = window.setInterval(() => {
+      if (!engineRef.current) return;
+      const ball = Matter.Bodies.circle(ballSpawnX, ballSpawnY, BALL_RADIUS, {
+        restitution: 0.94,
+        friction: 0.02,
+        frictionAir: 0.002,
+        label: "ball",
+      });
+      Matter.World.add(engineRef.current.world, ball);
+    }, ballSpawnIntervalSec * 1000);
+    return () => clearInterval(id);
+  }, [ballSpawnEnabled, running, ballSpawnX, ballSpawnY, ballSpawnIntervalSec]);
+
   const addColliderAt = (point: Point) => {
     if (!engineRef.current) return;
     const collider = Matter.Bodies.rectangle(point.x, point.y, 110, 34, {
@@ -887,9 +907,13 @@ function App() {
             <Grid3x3 size={18} />
             テストパターン
           </button>
-          <button type="button" onClick={() => addBallAt({ x: 180 + Math.random() * 240, y: 40 })}>
+          <button
+            type="button"
+            className={ballSpawnEnabled ? "active" : ""}
+            onClick={() => setBallSpawnEnabled((v) => !v)}
+          >
             <CirclePlus size={18} />
-            ボール追加
+            {ballSpawnEnabled ? "スポーン停止" : "自動スポーン"}
           </button>
           <button
             type="button"
@@ -943,7 +967,7 @@ function App() {
           <Metric label="入力" value={demoMode ? "DEMO" : cameraReady ? "CAM" : "OFF"} />
         </div>
 
-        <ControlGroup title="認識モード">
+        <ControlGroup title="認識モード" collapsible>
           <div className="button-row">
             <button
               type="button"
@@ -1020,7 +1044,7 @@ function App() {
           </ControlGroup>
         )}
 
-        <ControlGroup title="色検出">
+        <ControlGroup title="色検出" collapsible>
           <Range label="Hue" min={0} max={179} value={hue} onChange={setHue} />
           <Range label="許容幅" min={4} max={45} value={tolerance} onChange={setTolerance} />
           <Range label="彩度" min={0} max={255} value={saturation} onChange={setSaturation} />
@@ -1052,12 +1076,12 @@ function App() {
           </div>
         </ControlGroup>
 
-        <ControlGroup title="投影オフセット">
+        <ControlGroup title="投影オフセット" collapsible>
           <Range label="X" min={-160} max={160} value={offset.x} onChange={(x) => setOffset((point) => ({ ...point, x }))} />
           <Range label="Y" min={-120} max={120} value={offset.y} onChange={(y) => setOffset((point) => ({ ...point, y }))} />
         </ControlGroup>
 
-        <ControlGroup title="カメラオーバーレイ">
+        <ControlGroup title="カメラオーバーレイ" collapsible>
           <FloatRange
             label="不透明度"
             min={0}
@@ -1065,6 +1089,31 @@ function App() {
             step={0.05}
             value={cameraOverlayOpacity}
             onChange={setCameraOverlayOpacity}
+          />
+        </ControlGroup>
+
+        <ControlGroup title="ボール自動追加" collapsible>
+          <Range
+            label="X"
+            min={0}
+            max={PROJECTOR_WIDTH}
+            value={ballSpawnX}
+            onChange={setBallSpawnX}
+          />
+          <Range
+            label="Y"
+            min={0}
+            max={PROJECTOR_HEIGHT}
+            value={ballSpawnY}
+            onChange={setBallSpawnY}
+          />
+          <FloatRange
+            label="間隔(秒)"
+            min={0.5}
+            max={30}
+            step={0.5}
+            value={ballSpawnIntervalSec}
+            onChange={setBallSpawnIntervalSec}
           />
         </ControlGroup>
       </section>
@@ -1130,11 +1179,27 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function ControlGroup({ title, children }: { title: string; children: React.ReactNode }) {
+function ControlGroup({
+  title,
+  children,
+  collapsible = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  collapsible?: boolean;
+}) {
+  const [open, setOpen] = useState(true);
   return (
     <div className="control-group">
-      <h3>{title}</h3>
-      {children}
+      {collapsible ? (
+        <button type="button" className="control-group-header" onClick={() => setOpen((v) => !v)}>
+          <span>{title}</span>
+          <ChevronDown size={14} style={{ transform: open ? "none" : "rotate(-90deg)", transition: "transform 150ms" }} />
+        </button>
+      ) : (
+        <h3>{title}</h3>
+      )}
+      {(!collapsible || open) && children}
     </div>
   );
 }

@@ -187,6 +187,29 @@ button.active:hover {
   color: #e2e8f0;
 }
 
+.control-group-header {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  cursor: pointer;
+  min-height: unset;
+  border: none;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.control-group-header:hover {
+  color: #ffffff;
+  background: none;
+  border: none;
+}
+
 .range-row {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) 42px;
