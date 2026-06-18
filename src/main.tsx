@@ -1326,9 +1326,24 @@ function drawProjector(
   ctx.fillRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
 
   if (video && video.readyState >= 2 && (cameraOverlayOpacity ?? 0) > 0) {
+    const pts = cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints;
+    const srcXs = pts.map((p) => p.x);
+    const srcYs = pts.map((p) => p.y);
+    const srcX = Math.min(...srcXs);
+    const srcY = Math.min(...srcYs);
+    const srcW = Math.max(...srcXs) - srcX;
+    const srcH = Math.max(...srcYs) - srcY;
     ctx.save();
     ctx.globalAlpha = cameraOverlayOpacity ?? 0;
-    ctx.drawImage(video, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+    if (calibrationMode === "partial" && interactionArea && srcW > 0 && srcH > 0) {
+      ctx.beginPath();
+      ctx.rect(interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+      ctx.clip();
+      ctx.drawImage(video, srcX, srcY, srcW, srcH,
+        interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+    } else if (srcW > 0 && srcH > 0) {
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+    }
     ctx.restore();
   }
 
