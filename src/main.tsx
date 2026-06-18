@@ -29,7 +29,7 @@ type Point = { x: number; y: number };
 type Marker = { id: string; points: Point[]; center: Point; area: number };
 type Homography = number[];
 type Bounds = { minX: number; maxX: number; minY: number; maxY: number };
-type Tool = "none" | "calibrate" | "pickColor" | "addBall" | "addCollider";
+type Tool = "none" | "calibrate" | "pickColor" | "addBall" | "addCollider" | "setInteractionArea";
 
 const PROJECTOR_WIDTH = 1280;
 const PROJECTOR_HEIGHT = 720;
@@ -78,6 +78,13 @@ const projectorCorners: Point[] = [
   { x: PROJECTOR_WIDTH, y: 0 },
   { x: PROJECTOR_WIDTH, y: PROJECTOR_HEIGHT },
   { x: 0, y: PROJECTOR_HEIGHT },
+];
+
+const defaultInteractionAreaPoints: Point[] = [
+  { x: 160, y: 90 },
+  { x: PROJECTOR_WIDTH - 160, y: 90 },
+  { x: PROJECTOR_WIDTH - 160, y: PROJECTOR_HEIGHT - 90 },
+  { x: 160, y: PROJECTOR_HEIGHT - 90 },
 ];
 
 function orderCorners(points: Point[]): Point[] {
@@ -354,17 +361,8 @@ function App() {
 
   // ---- 部分認識モード用 state ----
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
-  const [interactionArea, setInteractionArea] = useState({ x: 160, y: 90, width: 960, height: 540 });
+  const [interactionAreaPoints, setInteractionAreaPoints] = useState<Point[]>(defaultInteractionAreaPoints);
   const [showInteractionArea, setShowInteractionArea] = useState(true);
-  const interactionAreaCorners: Point[] = useMemo(
-    () => [
-      { x: interactionArea.x, y: interactionArea.y },
-      { x: interactionArea.x + interactionArea.width, y: interactionArea.y },
-      { x: interactionArea.x + interactionArea.width, y: interactionArea.y + interactionArea.height },
-      { x: interactionArea.x, y: interactionArea.y + interactionArea.height },
-    ],
-    [interactionArea],
-  );
   // --------------------------------
 
   const homography = useMemo(
@@ -372,19 +370,17 @@ function App() {
       computeHomography(
         cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints,
         // 全体認識: Canvas全体の4隅  /  部分認識: interactionAreaの4隅
-        calibrationMode === "full" ? projectorCorners : interactionAreaCorners,
+        calibrationMode === "full" ? projectorCorners : (interactionAreaPoints.length === 4 ? interactionAreaPoints : defaultInteractionAreaPoints),
       ),
-    [cameraPoints, calibrationMode, interactionAreaCorners],
+    [cameraPoints, calibrationMode, interactionAreaPoints],
   );
   const playAreaBounds = useMemo(() => {
-    // 部分認識モード: interactionArea をそのままプレイ領域とする
+    // 部分認識モード: interactionAreaPoints のバウンディングボックスをプレイ領域とする
     if (calibrationMode === "partial") {
-      return {
-        minX: interactionArea.x,
-        maxX: interactionArea.x + interactionArea.width,
-        minY: interactionArea.y,
-        maxY: interactionArea.y + interactionArea.height,
-      };
+      const iaPts = interactionAreaPoints.length === 4 ? interactionAreaPoints : defaultInteractionAreaPoints;
+      const iaXs = iaPts.map((p) => p.x);
+      const iaYs = iaPts.map((p) => p.y);
+      return { minX: Math.min(...iaXs), maxX: Math.max(...iaXs), minY: Math.min(...iaYs), maxY: Math.max(...iaYs) };
     }
     // 全体認識モード: 4点補正点を投影座標に変換して境界を求める
     const src = cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints;
@@ -397,7 +393,7 @@ function App() {
       minY: Math.min(...ys),
       maxY: Math.max(...ys),
     };
-  }, [calibrationMode, cameraPoints, homography, interactionArea, offset]);
+  }, [calibrationMode, cameraPoints, homography, interactionAreaPoints, offset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -504,7 +500,7 @@ function App() {
         drawProjectorBallsOnly(outCtx, engineRef.current, flipX, flipY);
       }
       if (calibrationMode === "partial" && showInteractionArea) {
-        drawInteractionAreaBorder(outCtx, interactionArea, flipX, flipY);
+        drawInteractionAreaBorder(outCtx, interactionAreaPoints.length === 4 ? interactionAreaPoints : defaultInteractionAreaPoints, flipX, flipY);
       }
       if (tool === "calibrate") {
         drawCalibrationMarkers(outCtx, flipX, flipY);
@@ -517,7 +513,7 @@ function App() {
         if (testPattern) {
           drawTestPattern(projectorCtx);
         } else {
-          drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+          drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
         }
         renderOutputWindow();
         return;
@@ -544,7 +540,7 @@ function App() {
       if (testPattern) {
         drawTestPattern(projectorCtx);
       } else {
-        drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+        drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
       }
       drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool);
       renderOutputWindow();
@@ -572,7 +568,7 @@ function App() {
     flipY,
     homography,
     hue,
-    interactionArea,
+    interactionAreaPoints,
     offset,
     playAreaBounds,
     running,
@@ -743,7 +739,7 @@ function App() {
       mode: calibrationMode,
       fullCameraPoints: calibrationMode === "full" ? cameraPoints : undefined,
       partialCameraPoints: calibrationMode === "partial" ? cameraPoints : undefined,
-      interactionArea,
+      interactionAreaPoints,
       offset,
       showInteractionArea,
     };
@@ -769,7 +765,7 @@ function App() {
         if (p.mode === "full" || p.mode === "partial") setCalibrationMode(p.mode);
         const pts = p.mode === "partial" ? p.partialCameraPoints : p.fullCameraPoints;
         if (Array.isArray(pts) && pts.length === 4) setCameraPoints(pts);
-        if (p.interactionArea) setInteractionArea(p.interactionArea);
+        if (Array.isArray(p.interactionAreaPoints) && p.interactionAreaPoints.length === 4) setInteractionAreaPoints(p.interactionAreaPoints);
         if (p.offset) setOffset(p.offset);
         if (typeof p.showInteractionArea === "boolean") setShowInteractionArea(p.showInteractionArea);
         setStatus("キャリブレーション設定を読み込みました");
@@ -823,7 +819,7 @@ function App() {
   };
 
   const handleProjectorClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tool !== "addBall" && tool !== "addCollider") return;
+    if (tool !== "addBall" && tool !== "addCollider" && tool !== "setInteractionArea") return;
     const point = getContentRelativePoint(
       event.currentTarget,
       event.clientX,
@@ -831,8 +827,15 @@ function App() {
       PROJECTOR_WIDTH,
       PROJECTOR_HEIGHT,
     );
-    if (tool === "addBall") addBallAt(point);
-    else addColliderAt(point);
+    if (tool === "addBall") { addBallAt(point); return; }
+    if (tool === "addCollider") { addColliderAt(point); return; }
+    if (tool === "setInteractionArea") {
+      const next = [...interactionAreaPoints.filter((_, i) => i < 4)];
+      if (next.length >= 4) return;
+      next.push(point);
+      setInteractionAreaPoints(next);
+      if (next.length === 4) setTool("none");
+    }
   };
 
   return (
@@ -983,34 +986,29 @@ function App() {
 
         {calibrationMode === "partial" && (
           <ControlGroup title="Interaction Area">
-            <Range
-              label="X"
-              min={0}
-              max={PROJECTOR_WIDTH - 100}
-              value={interactionArea.x}
-              onChange={(x) => setInteractionArea((a) => ({ ...a, x }))}
-            />
-            <Range
-              label="Y"
-              min={0}
-              max={PROJECTOR_HEIGHT - 100}
-              value={interactionArea.y}
-              onChange={(y) => setInteractionArea((a) => ({ ...a, y }))}
-            />
-            <Range
-              label="幅"
-              min={100}
-              max={PROJECTOR_WIDTH}
-              value={interactionArea.width}
-              onChange={(width) => setInteractionArea((a) => ({ ...a, width }))}
-            />
-            <Range
-              label="高さ"
-              min={100}
-              max={PROJECTOR_HEIGHT}
-              value={interactionArea.height}
-              onChange={(height) => setInteractionArea((a) => ({ ...a, height }))}
-            />
+            <div className="button-row">
+              <button
+                type="button"
+                className={tool === "setInteractionArea" ? "active" : ""}
+                onClick={() => {
+                  setInteractionAreaPoints([]);
+                  setTool("setInteractionArea");
+                }}
+              >
+                <Crosshair size={16} />
+                4点設定
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInteractionAreaPoints(defaultInteractionAreaPoints);
+                  setTool("none");
+                }}
+              >
+                <RotateCcw size={16} />
+                初期化
+              </button>
+            </div>
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -1084,7 +1082,9 @@ function App() {
                     ? "投影画面をクリックしてボールを配置"
                     : tool === "addCollider"
                       ? "投影画面をクリックしてコリジョンを配置"
-                      : "検出した物体が静的コリジョンになります"}
+                      : tool === "setInteractionArea"
+                        ? `投影画面の4隅をクリック (${interactionAreaPoints.length}/4)`
+                        : "検出した物体が静的コリジョンになります"}
             </p>
           </div>
           <SlidersHorizontal size={22} />
@@ -1096,7 +1096,7 @@ function App() {
               width={PROJECTOR_WIDTH}
               height={PROJECTOR_HEIGHT}
               onClick={handleProjectorClick}
-              className={tool === "addBall" || tool === "addCollider" ? "is-targeting" : ""}
+              className={tool === "addBall" || tool === "addCollider" || tool === "setInteractionArea" ? "is-targeting" : ""}
             />
           </div>
           <div className="canvas-block camera-block">
@@ -1315,7 +1315,7 @@ function drawProjector(
   tool: Tool,
   cameraPoints: Point[],
   calibrationMode?: "full" | "partial",
-  interactionArea?: { x: number; y: number; width: number; height: number },
+  interactionAreaPoints?: Point[],
   showInteractionArea?: boolean,
   video?: HTMLVideoElement | null,
   cameraOverlayOpacity?: number,
@@ -1335,12 +1335,18 @@ function drawProjector(
     const srcH = Math.max(...srcYs) - srcY;
     ctx.save();
     ctx.globalAlpha = cameraOverlayOpacity ?? 0;
-    if (calibrationMode === "partial" && interactionArea && srcW > 0 && srcH > 0) {
+    if (calibrationMode === "partial" && interactionAreaPoints && interactionAreaPoints.length === 4 && srcW > 0 && srcH > 0) {
+      const iaXs = interactionAreaPoints.map((p) => p.x);
+      const iaYs = interactionAreaPoints.map((p) => p.y);
+      const dstX = Math.min(...iaXs);
+      const dstY = Math.min(...iaYs);
+      const dstW = Math.max(...iaXs) - dstX;
+      const dstH = Math.max(...iaYs) - dstY;
       ctx.beginPath();
-      ctx.rect(interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+      interactionAreaPoints.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
       ctx.clip();
-      ctx.drawImage(video, srcX, srcY, srcW, srcH,
-        interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH);
     } else if (srcW > 0 && srcH > 0) {
       ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
     }
@@ -1364,17 +1370,34 @@ function drawProjector(
   }
 
   // 部分認識モード: Interaction Area の枠を描画
-  if (calibrationMode === "partial" && showInteractionArea && interactionArea) {
+  const iaPts = interactionAreaPoints && interactionAreaPoints.length === 4 ? interactionAreaPoints : null;
+  if (calibrationMode === "partial" && showInteractionArea && iaPts) {
     ctx.save();
     ctx.strokeStyle = "#ff6b35";
     ctx.setLineDash([14, 8]);
     ctx.lineWidth = 3;
-    ctx.strokeRect(interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+    ctx.beginPath();
+    iaPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = "#ff6b35";
     ctx.font = "bold 14px system-ui";
-    ctx.fillText("Interaction Area", interactionArea.x + 8, interactionArea.y + 20);
+    ctx.fillText("Interaction Area", iaPts[0].x + 8, iaPts[0].y + 20);
     ctx.restore();
+  }
+
+  // setInteractionArea ツール中: 設定済み点を表示
+  if (tool === "setInteractionArea" && interactionAreaPoints) {
+    interactionAreaPoints.forEach((p, i) => {
+      ctx.fillStyle = "#ff6b35";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#10151f";
+      ctx.font = "bold 13px system-ui";
+      ctx.fillText(String(i + 1), p.x - 4, p.y + 5);
+    });
   }
 
   if (calibrating || cameraPoints.length < 4) {
@@ -1461,17 +1484,21 @@ function drawTestPattern(ctx: CanvasRenderingContext2D) {
 
 function drawInteractionAreaBorder(
   ctx: CanvasRenderingContext2D,
-  area: { x: number; y: number; width: number; height: number },
+  points: Point[],
   flipX: boolean,
   flipY: boolean,
 ) {
+  if (points.length !== 4) return;
   ctx.save();
   ctx.translate(flipX ? PROJECTOR_WIDTH : 0, flipY ? PROJECTOR_HEIGHT : 0);
   ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
   ctx.strokeStyle = "#ff6b35";
   ctx.setLineDash([14, 8]);
   ctx.lineWidth = 3;
-  ctx.strokeRect(area.x, area.y, area.width, area.height);
+  ctx.beginPath();
+  points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.stroke();
   ctx.restore();
 }
 
