@@ -6,7 +6,6 @@ import {
   CirclePlus,
   Crosshair,
   Eraser,
-  Crop,
   FlaskConical,
   FlipHorizontal,
   FlipVertical,
@@ -29,9 +28,8 @@ import "./styles.css";
 type Point = { x: number; y: number };
 type Marker = { id: string; points: Point[]; center: Point; area: number };
 type Homography = number[];
-type Rect = { x: number; y: number; width: number; height: number };
 type Bounds = { minX: number; maxX: number; minY: number; maxY: number };
-type Tool = "none" | "calibrate" | "pickColor" | "addBall" | "addCollider" | "detectArea";
+type Tool = "none" | "calibrate" | "pickColor" | "addBall" | "addCollider";
 
 const PROJECTOR_WIDTH = 1280;
 const PROJECTOR_HEIGHT = 720;
@@ -251,7 +249,6 @@ function detectMarkers(
   saturation: number,
   value: number,
   maskCanvas?: HTMLCanvasElement | null,
-  roi?: Rect | null,
 ) {
   const markers: Marker[] = [];
   const src = cv.imread(sourceCanvas);
@@ -275,18 +272,6 @@ function detectMarkers(
     cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
     cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
     kernel.delete();
-
-    if (roi) {
-      const black = new cv.Scalar(0, 0, 0, 0);
-      if (roi.y > 0) cv.rectangle(mask, new cv.Point(0, 0), new cv.Point(mask.cols, roi.y), black, -1);
-      if (roi.y + roi.height < mask.rows) {
-        cv.rectangle(mask, new cv.Point(0, roi.y + roi.height), new cv.Point(mask.cols, mask.rows), black, -1);
-      }
-      if (roi.x > 0) cv.rectangle(mask, new cv.Point(0, roi.y), new cv.Point(roi.x, roi.y + roi.height), black, -1);
-      if (roi.x + roi.width < mask.cols) {
-        cv.rectangle(mask, new cv.Point(roi.x + roi.width, roi.y), new cv.Point(mask.cols, roi.y + roi.height), black, -1);
-      }
-    }
 
     if (maskCanvas) {
       cv.imshow(maskCanvas, mask);
@@ -354,8 +339,6 @@ function App() {
   const [flipY, setFlipY] = useState(false);
   const [testPattern, setTestPattern] = useState(false);
   const [tool, setTool] = useState<Tool>("none");
-  const [cameraRoi, setCameraRoi] = useState<Rect | null>(null);
-  const [detectAreaStart, setDetectAreaStart] = useState<Point | null>(null);
   const [cameraPoints, setCameraPoints] = useState<Point[]>(defaultCameraPoints);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [fps, setFps] = useState(0);
@@ -389,22 +372,26 @@ function App() {
     [cameraPoints, calibrationMode, interactionAreaCorners],
   );
   const playAreaBounds = useMemo(() => {
-    const roi = cameraRoi ?? { x: 0, y: 0, width: CAMERA_WIDTH, height: CAMERA_HEIGHT };
-    const corners = [
-      { x: roi.x, y: roi.y },
-      { x: roi.x + roi.width, y: roi.y },
-      { x: roi.x + roi.width, y: roi.y + roi.height },
-      { x: roi.x, y: roi.y + roi.height },
-    ].map((point) => transformPoint(point, homography, offset));
-    const xs = corners.map((point) => point.x);
-    const ys = corners.map((point) => point.y);
+    if (calibrationMode === "partial") {
+      return {
+        minX: interactionArea.x,
+        maxX: interactionArea.x + interactionArea.width,
+        minY: interactionArea.y,
+        maxY: interactionArea.y + interactionArea.height,
+      };
+    }
+    // 全体認識モード: キャリブレーション4点をプロジェクター座標に変換して領域を算出
+    const points = (cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints)
+      .map((point) => transformPoint(point, homography, offset));
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
     return {
       minX: Math.min(...xs),
       maxX: Math.max(...xs),
       minY: Math.min(...ys),
       maxY: Math.max(...ys),
     };
-  }, [cameraRoi, homography, offset]);
+  }, [calibrationMode, cameraPoints, homography, interactionArea, offset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -521,7 +508,7 @@ function App() {
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
+        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
         renderOutputWindow();
         return;
       }
@@ -532,10 +519,13 @@ function App() {
 
       let currentMarkers = previousMarkersRef.current;
       if (cvReady && (cameraReady || demoMode)) {
-        currentMarkers = demoMode
+        const detected = demoMode
           ? animatedDemoMarkers(time)
-          : detectMarkers(window.cv, cameraCanvas, hue, tolerance, saturation, value, maskCanvasRef.current, cameraRoi);
-        currentMarkers = smoothMarkers(previousMarkersRef.current, currentMarkers);
+          : detectMarkers(window.cv, cameraCanvas, hue, tolerance, saturation, value, maskCanvasRef.current);
+        const clipped = cameraPoints.length === 4
+          ? detected.filter((m) => pointInQuad(m.center, cameraPoints))
+          : detected;
+        currentMarkers = smoothMarkers(previousMarkersRef.current, clipped);
         previousMarkersRef.current = currentMarkers;
       }
 
@@ -544,8 +534,8 @@ function App() {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
-      drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool, cameraRoi, detectAreaStart);
+      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, videoRef.current, cameraOverlayOpacity, calibrationMode, interactionArea, showInteractionArea);
+      drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool);
       renderOutputWindow();
 
       frames += 1;
@@ -564,11 +554,9 @@ function App() {
     cameraOverlayOpacity,
     cameraPoints,
     cameraReady,
-    cameraRoi,
     tool,
     cvReady,
     demoMode,
-    detectAreaStart,
     flipX,
     flipY,
     homography,
@@ -686,13 +674,7 @@ function App() {
   };
 
   const toggleTool = (next: Tool) => {
-    setDetectAreaStart(null);
     setTool((current) => (current === next ? "none" : next));
-  };
-
-  const resetCameraRoi = () => {
-    setDetectAreaStart(null);
-    setCameraRoi(null);
   };
 
   const resetColorSettings = () => {
@@ -820,31 +802,6 @@ function App() {
       setTool("none");
       return;
     }
-
-    if (tool === "detectArea") {
-      const point = getContentRelativePoint(
-        event.currentTarget,
-        event.clientX,
-        event.clientY,
-        CAMERA_WIDTH,
-        CAMERA_HEIGHT,
-      );
-      if (!detectAreaStart) {
-        setDetectAreaStart(point);
-        return;
-      }
-      const rect: Rect = {
-        x: Math.min(detectAreaStart.x, point.x),
-        y: Math.min(detectAreaStart.y, point.y),
-        width: Math.abs(point.x - detectAreaStart.x),
-        height: Math.abs(point.y - detectAreaStart.y),
-      };
-      setDetectAreaStart(null);
-      setTool("none");
-      if (rect.width > 20 && rect.height > 20) {
-        setCameraRoi(rect);
-      }
-    }
   };
 
   const handleProjectorClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -927,18 +884,6 @@ function App() {
           <button type="button" onClick={() => setCameraPoints(defaultCameraPoints)}>
             <RotateCcw size={18} />
             補正初期化
-          </button>
-          <button
-            type="button"
-            className={tool === "detectArea" ? "active" : ""}
-            onClick={() => toggleTool("detectArea")}
-          >
-            <Crop size={18} />
-            判定範囲を設定
-          </button>
-          <button type="button" onClick={resetCameraRoi}>
-            <RotateCcw size={18} />
-            判定範囲初期化
           </button>
           <button
             type="button"
@@ -1121,11 +1066,7 @@ function App() {
                     ? "投影画面をクリックしてボールを配置"
                     : tool === "addCollider"
                       ? "投影画面をクリックしてコリジョンを配置"
-                      : tool === "detectArea"
-                        ? detectAreaStart
-                          ? "カメラ映像内でもう一方の角をクリック"
-                          : "カメラ映像内で解析したい範囲の対角2点をクリック(1点目)"
-                        : "検出した物体が静的コリジョンになります"}
+                      : "検出した物体が静的コリジョンになります"}
             </p>
           </div>
           <SlidersHorizontal size={22} />
@@ -1146,7 +1087,7 @@ function App() {
               width={CAMERA_WIDTH}
               height={CAMERA_HEIGHT}
               onClick={handleCameraClick}
-              className={tool === "calibrate" || tool === "pickColor" || tool === "detectArea" ? "is-targeting" : ""}
+              className={tool === "calibrate" || tool === "pickColor" ? "is-targeting" : ""}
             />
             <video ref={videoRef} muted playsInline />
             {!cameraReady && !demoMode ? (
@@ -1295,8 +1236,6 @@ function drawCameraOverlay(
   markers: Marker[],
   cameraPoints: Point[],
   tool: Tool,
-  cameraRoi: Rect | null,
-  pendingDetectPoint: Point | null,
 ) {
   const calibrating = tool === "calibrate";
   markers.forEach((marker) => {
@@ -1322,22 +1261,6 @@ function drawCameraOverlay(
     ctx.font = "12px system-ui";
     ctx.fillText(String(index + 1), point.x - 4, point.y + 4);
   });
-
-  if (cameraRoi) {
-    ctx.save();
-    ctx.strokeStyle = "#37e0ff";
-    ctx.setLineDash([8, 6]);
-    ctx.lineWidth = 2;
-    ctx.strokeRect(cameraRoi.x, cameraRoi.y, cameraRoi.width, cameraRoi.height);
-    ctx.restore();
-  }
-
-  if (pendingDetectPoint) {
-    ctx.fillStyle = "#37e0ff";
-    ctx.beginPath();
-    ctx.arc(pendingDetectPoint.x, pendingDetectPoint.y, 7, 0, Math.PI * 2);
-    ctx.fill();
-  }
 }
 
 function updateColliderBodies(engine: Matter.Engine | null, markers: Marker[], homography: Homography, offset: Point) {
@@ -1372,7 +1295,6 @@ function drawProjector(
   offset: Point,
   tool: Tool,
   cameraPoints: Point[],
-  cameraRoi: Rect | null,
   video?: HTMLVideoElement | null,
   cameraOverlayOpacity?: number,
   calibrationMode?: "full" | "partial",
@@ -1432,22 +1354,14 @@ function drawProjector(
     });
   }
 
-  if (cameraRoi) {
-    const roiCorners = [
-      { x: cameraRoi.x, y: cameraRoi.y },
-      { x: cameraRoi.x + cameraRoi.width, y: cameraRoi.y },
-      { x: cameraRoi.x + cameraRoi.width, y: cameraRoi.y + cameraRoi.height },
-      { x: cameraRoi.x, y: cameraRoi.y + cameraRoi.height },
-    ].map((point) => transformPoint(point, homography, offset));
+  if (!calibrating && cameraPoints.length === 4 && calibrationMode === "full") {
+    const projPoints = cameraPoints.map((p) => transformPoint(p, homography, offset));
     ctx.save();
-    ctx.strokeStyle = "#37e0ff";
-    ctx.setLineDash([10, 8]);
+    ctx.strokeStyle = "rgba(90, 167, 255, 0.6)";
+    ctx.setLineDash([10, 6]);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    roiCorners.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
+    projPoints.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.stroke();
     ctx.restore();
