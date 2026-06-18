@@ -367,6 +367,7 @@ function App() {
   const [saturation, setSaturation] = useState(DEFAULT_COLOR_SETTINGS.saturation);
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
 
   // ---- 部分認識モード用 state ----
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
@@ -535,7 +536,7 @@ function App() {
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea);
+        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
         renderOutputWindow();
         return;
       }
@@ -558,7 +559,7 @@ function App() {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea);
+      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
       drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool, cameraRoi, detectAreaStart);
       renderOutputWindow();
 
@@ -575,6 +576,7 @@ function App() {
     return () => cancelAnimationFrame(frameRef.current);
   }, [
     calibrationMode,
+    cameraOverlayOpacity,
     cameraPoints,
     cameraReady,
     cameraRoi,
@@ -1114,6 +1116,17 @@ function App() {
           <Range label="X" min={-160} max={160} value={offset.x} onChange={(x) => setOffset((point) => ({ ...point, x }))} />
           <Range label="Y" min={-120} max={120} value={offset.y} onChange={(y) => setOffset((point) => ({ ...point, y }))} />
         </ControlGroup>
+
+        <ControlGroup title="カメラオーバーレイ">
+          <FloatRange
+            label="不透明度"
+            min={0}
+            max={1}
+            step={0.05}
+            value={cameraOverlayOpacity}
+            onChange={setCameraOverlayOpacity}
+          />
+        </ControlGroup>
       </section>
 
       <section className="workbench">
@@ -1206,6 +1219,37 @@ function Range({
       <span>{label}</span>
       <input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
       <output>{Math.round(value)}</output>
+    </label>
+  );
+}
+
+function FloatRange({
+  label,
+  min,
+  max,
+  step,
+  value,
+  onChange,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="range-row">
+      <span>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <output>{value.toFixed(2)}</output>
     </label>
   );
 }
@@ -1353,11 +1397,20 @@ function drawProjector(
   calibrationMode?: "full" | "partial",
   interactionArea?: { x: number; y: number; width: number; height: number },
   showInteractionArea?: boolean,
+  video?: HTMLVideoElement | null,
+  cameraOverlayOpacity?: number,
 ) {
   const calibrating = tool === "calibrate";
   ctx.clearRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
   ctx.fillStyle = "#0e1219";
   ctx.fillRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+
+  if (video && video.readyState >= 2 && (cameraOverlayOpacity ?? 0) > 0) {
+    ctx.save();
+    ctx.globalAlpha = cameraOverlayOpacity ?? 0;
+    ctx.drawImage(video, 0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
+    ctx.restore();
+  }
 
   const grid = 80;
   ctx.strokeStyle = "rgba(255,255,255,0.055)";
