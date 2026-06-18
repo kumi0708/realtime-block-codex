@@ -514,7 +514,11 @@ function App() {
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+        if (testPattern) {
+          drawTestPattern(projectorCtx);
+        } else {
+          drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+        }
         renderOutputWindow();
         return;
       }
@@ -537,7 +541,11 @@ function App() {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+      if (testPattern) {
+        drawTestPattern(projectorCtx);
+      } else {
+        drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionArea, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+      }
       drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool);
       renderOutputWindow();
 
