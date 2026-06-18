@@ -361,16 +361,48 @@ function App() {
   const [fps, setFps] = useState(0);
   const [status, setStatus] = useState("OpenCV.jsを読み込み中");
   const colorFileInputRef = useRef<HTMLInputElement | null>(null);
+  const calibFileInputRef = useRef<HTMLInputElement | null>(null);
   const [hue, setHue] = useState(DEFAULT_COLOR_SETTINGS.hue);
   const [tolerance, setTolerance] = useState(DEFAULT_COLOR_SETTINGS.tolerance);
   const [saturation, setSaturation] = useState(DEFAULT_COLOR_SETTINGS.saturation);
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+
+  // ---- 部分認識モード用 state ----
+  const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
+  const [interactionArea, setInteractionArea] = useState({ x: 160, y: 90, width: 960, height: 540 });
+  const [showInteractionArea, setShowInteractionArea] = useState(true);
+  const interactionAreaCorners: Point[] = useMemo(
+    () => [
+      { x: interactionArea.x, y: interactionArea.y },
+      { x: interactionArea.x + interactionArea.width, y: interactionArea.y },
+      { x: interactionArea.x + interactionArea.width, y: interactionArea.y + interactionArea.height },
+      { x: interactionArea.x, y: interactionArea.y + interactionArea.height },
+    ],
+    [interactionArea],
+  );
+  // --------------------------------
+
   const homography = useMemo(
-    () => computeHomography(cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints, projectorCorners),
-    [cameraPoints],
+    () =>
+      computeHomography(
+        cameraPoints.length === 4 ? cameraPoints : defaultCameraPoints,
+        // 全体認識: Canvas全体の4隅  /  部分認識: interactionAreaの4隅
+        calibrationMode === "full" ? projectorCorners : interactionAreaCorners,
+      ),
+    [cameraPoints, calibrationMode, interactionAreaCorners],
   );
   const playAreaBounds = useMemo(() => {
+    // 部分認識モード: interactionArea をそのままプレイ領域とする
+    if (calibrationMode === "partial") {
+      return {
+        minX: interactionArea.x,
+        maxX: interactionArea.x + interactionArea.width,
+        minY: interactionArea.y,
+        maxY: interactionArea.y + interactionArea.height,
+      };
+    }
+    // 全体認識モード: 既存ロジックをそのまま維持
     const roi = cameraRoi ?? { x: 0, y: 0, width: CAMERA_WIDTH, height: CAMERA_HEIGHT };
     const corners = [
       { x: roi.x, y: roi.y },
@@ -386,7 +418,7 @@ function App() {
       minY: Math.min(...ys),
       maxY: Math.max(...ys),
     };
-  }, [cameraRoi, homography, offset]);
+  }, [calibrationMode, cameraRoi, homography, interactionArea, offset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -492,6 +524,9 @@ function App() {
       } else {
         drawProjectorBallsOnly(outCtx, engineRef.current, flipX, flipY);
       }
+      if (calibrationMode === "partial" && showInteractionArea) {
+        drawInteractionAreaBorder(outCtx, interactionArea, flipX, flipY);
+      }
       if (tool === "calibrate") {
         drawCalibrationMarkers(outCtx, flipX, flipY);
       }
@@ -500,7 +535,7 @@ function App() {
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi);
+        drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea);
         renderOutputWindow();
         return;
       }
@@ -523,7 +558,7 @@ function App() {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi);
+      drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, cameraRoi, calibrationMode, interactionArea, showInteractionArea);
       drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool, cameraRoi, detectAreaStart);
       renderOutputWindow();
 
@@ -539,6 +574,7 @@ function App() {
     frameRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frameRef.current);
   }, [
+    calibrationMode,
     cameraPoints,
     cameraReady,
     cameraRoi,
@@ -550,10 +586,12 @@ function App() {
     flipY,
     homography,
     hue,
+    interactionArea,
     offset,
     playAreaBounds,
     running,
     saturation,
+    showInteractionArea,
     testPattern,
     tolerance,
     value,
@@ -718,6 +756,45 @@ function App() {
       .catch(() => {
         setStatus("色検出設定の読み込みに失敗しました");
       });
+  };
+
+  const saveCalibrationSettings = () => {
+    const settings = {
+      mode: calibrationMode,
+      fullCameraPoints: calibrationMode === "full" ? cameraPoints : undefined,
+      partialCameraPoints: calibrationMode === "partial" ? cameraPoints : undefined,
+      interactionArea,
+      offset,
+      showInteractionArea,
+    };
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "calibration-settings.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadCalibrationSettings = () => calibFileInputRef.current?.click();
+
+  const handleCalibFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    file
+      .text()
+      .then((text) => {
+        const p = JSON.parse(text);
+        if (p.mode === "full" || p.mode === "partial") setCalibrationMode(p.mode);
+        const pts = p.mode === "partial" ? p.partialCameraPoints : p.fullCameraPoints;
+        if (Array.isArray(pts) && pts.length === 4) setCameraPoints(pts);
+        if (p.interactionArea) setInteractionArea(p.interactionArea);
+        if (p.offset) setOffset(p.offset);
+        if (typeof p.showInteractionArea === "boolean") setShowInteractionArea(p.showInteractionArea);
+        setStatus("キャリブレーション設定を読み込みました");
+      })
+      .catch(() => setStatus("キャリブレーション設定の読み込みに失敗しました"));
   };
 
   const handleCameraClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -918,6 +995,88 @@ function App() {
           <Metric label="補正点" value={`${cameraPoints.length}/4`} />
           <Metric label="入力" value={demoMode ? "DEMO" : cameraReady ? "CAM" : "OFF"} />
         </div>
+
+        <ControlGroup title="認識モード">
+          <div className="button-row">
+            <button
+              type="button"
+              className={calibrationMode === "full" ? "active" : ""}
+              onClick={() => setCalibrationMode("full")}
+            >
+              全体認識
+            </button>
+            <button
+              type="button"
+              className={calibrationMode === "partial" ? "active" : ""}
+              onClick={() => setCalibrationMode("partial")}
+            >
+              部分認識
+            </button>
+          </div>
+          <p className="mode-desc">
+            {calibrationMode === "full"
+              ? "カメラ4点 → Canvas全体"
+              : "カメラ4点 → Interaction Area"}
+          </p>
+          <div className="button-row">
+            <button type="button" onClick={saveCalibrationSettings}>
+              <Save size={16} />
+              保存
+            </button>
+            <button type="button" onClick={loadCalibrationSettings}>
+              <Upload size={16} />
+              読み込み
+            </button>
+            <input
+              ref={calibFileInputRef}
+              type="file"
+              accept="application/json"
+              onChange={handleCalibFileChange}
+              className="hidden-file-input"
+            />
+          </div>
+        </ControlGroup>
+
+        {calibrationMode === "partial" && (
+          <ControlGroup title="Interaction Area">
+            <Range
+              label="X"
+              min={0}
+              max={PROJECTOR_WIDTH - 100}
+              value={interactionArea.x}
+              onChange={(x) => setInteractionArea((a) => ({ ...a, x }))}
+            />
+            <Range
+              label="Y"
+              min={0}
+              max={PROJECTOR_HEIGHT - 100}
+              value={interactionArea.y}
+              onChange={(y) => setInteractionArea((a) => ({ ...a, y }))}
+            />
+            <Range
+              label="幅"
+              min={100}
+              max={PROJECTOR_WIDTH}
+              value={interactionArea.width}
+              onChange={(width) => setInteractionArea((a) => ({ ...a, width }))}
+            />
+            <Range
+              label="高さ"
+              min={100}
+              max={PROJECTOR_HEIGHT}
+              value={interactionArea.height}
+              onChange={(height) => setInteractionArea((a) => ({ ...a, height }))}
+            />
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={showInteractionArea}
+                onChange={(e) => setShowInteractionArea(e.target.checked)}
+              />
+              エリア枠を表示
+            </label>
+          </ControlGroup>
+        )}
 
         <ControlGroup title="色検出">
           <Range label="Hue" min={0} max={179} value={hue} onChange={setHue} />
@@ -1191,6 +1350,9 @@ function drawProjector(
   tool: Tool,
   cameraPoints: Point[],
   cameraRoi: Rect | null,
+  calibrationMode?: "full" | "partial",
+  interactionArea?: { x: number; y: number; width: number; height: number },
+  showInteractionArea?: boolean,
 ) {
   const calibrating = tool === "calibrate";
   ctx.clearRect(0, 0, PROJECTOR_WIDTH, PROJECTOR_HEIGHT);
@@ -1211,6 +1373,20 @@ function drawProjector(
     ctx.moveTo(0, y);
     ctx.lineTo(PROJECTOR_WIDTH, y);
     ctx.stroke();
+  }
+
+  // 部分認識モード: Interaction Area の枠を描画
+  if (calibrationMode === "partial" && showInteractionArea && interactionArea) {
+    ctx.save();
+    ctx.strokeStyle = "#ff6b35";
+    ctx.setLineDash([14, 8]);
+    ctx.lineWidth = 3;
+    ctx.strokeRect(interactionArea.x, interactionArea.y, interactionArea.width, interactionArea.height);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ff6b35";
+    ctx.font = "bold 14px system-ui";
+    ctx.fillText("Interaction Area", interactionArea.x + 8, interactionArea.y + 20);
+    ctx.restore();
   }
 
   if (calibrating || cameraPoints.length < 4) {
@@ -1314,6 +1490,22 @@ function drawTestPattern(ctx: CanvasRenderingContext2D) {
   ctx.strokeStyle = "#ff0000";
   ctx.lineWidth = 4;
   ctx.strokeRect(2, 2, PROJECTOR_WIDTH - 4, PROJECTOR_HEIGHT - 4);
+}
+
+function drawInteractionAreaBorder(
+  ctx: CanvasRenderingContext2D,
+  area: { x: number; y: number; width: number; height: number },
+  flipX: boolean,
+  flipY: boolean,
+) {
+  ctx.save();
+  ctx.translate(flipX ? PROJECTOR_WIDTH : 0, flipY ? PROJECTOR_HEIGHT : 0);
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.strokeStyle = "#ff6b35";
+  ctx.setLineDash([14, 8]);
+  ctx.lineWidth = 3;
+  ctx.strokeRect(area.x, area.y, area.width, area.height);
+  ctx.restore();
 }
 
 function drawCalibrationMarkers(ctx: CanvasRenderingContext2D, flipX: boolean, flipY: boolean) {
