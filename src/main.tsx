@@ -353,6 +353,7 @@ function App() {
   const [ballSpawnX, setBallSpawnX] = useState(Math.round(PROJECTOR_WIDTH / 2));
   const [ballSpawnY, setBallSpawnY] = useState(40);
   const [ballSpawnIntervalSec, setBallSpawnIntervalSec] = useState(3.0);
+  const [ballSpawnRadius, setBallSpawnRadius] = useState(BALL_RADIUS);
   const [tool, setTool] = useState<Tool>("none");
   const [cameraPoints, setCameraPoints] = useState<Point[]>(defaultCameraPoints);
   const [markers, setMarkers] = useState<Marker[]>([]);
@@ -680,7 +681,7 @@ function App() {
 
   const addBallAt = (point: Point) => {
     if (!engineRef.current) return;
-    const ball = Matter.Bodies.circle(point.x, point.y, BALL_RADIUS, {
+    const ball = Matter.Bodies.circle(point.x, point.y, ballSpawnRadius, {
       restitution: 0.94,
       friction: 0.02,
       frictionAir: 0.002,
@@ -693,7 +694,7 @@ function App() {
     if (!ballSpawnEnabled || !running) return;
     const id = window.setInterval(() => {
       if (!engineRef.current) return;
-      const ball = Matter.Bodies.circle(ballSpawnX, ballSpawnY, BALL_RADIUS, {
+      const ball = Matter.Bodies.circle(ballSpawnX, ballSpawnY, ballSpawnRadius, {
         restitution: 0.94,
         friction: 0.02,
         frictionAir: 0.002,
@@ -702,7 +703,7 @@ function App() {
       Matter.World.add(engineRef.current.world, ball);
     }, ballSpawnIntervalSec * 1000);
     return () => clearInterval(id);
-  }, [ballSpawnEnabled, running, ballSpawnX, ballSpawnY, ballSpawnIntervalSec]);
+  }, [ballSpawnEnabled, running, ballSpawnX, ballSpawnY, ballSpawnIntervalSec, ballSpawnRadius]);
 
   const addColliderAt = (point: Point) => {
     if (!engineRef.current) return;
@@ -1019,6 +1020,38 @@ function App() {
           <Metric label="入力" value={demoMode ? "DEMO" : cameraReady ? "CAM" : "OFF"} />
         </div>
 
+        <ControlGroup title="ボール自動追加" collapsible>
+          <Range
+            label="X"
+            min={0}
+            max={PROJECTOR_WIDTH}
+            value={ballSpawnX}
+            onChange={setBallSpawnX}
+          />
+          <Range
+            label="Y"
+            min={0}
+            max={PROJECTOR_HEIGHT}
+            value={ballSpawnY}
+            onChange={setBallSpawnY}
+          />
+          <FloatRange
+            label="間隔(秒)"
+            min={0.5}
+            max={30}
+            step={0.5}
+            value={ballSpawnIntervalSec}
+            onChange={setBallSpawnIntervalSec}
+          />
+          <Range
+            label="半径"
+            min={5}
+            max={120}
+            value={ballSpawnRadius}
+            onChange={setBallSpawnRadius}
+          />
+        </ControlGroup>
+
         <ControlGroup title="認識モード" collapsible>
           <div className="button-row">
             <button
@@ -1144,30 +1177,6 @@ function App() {
           />
         </ControlGroup>
 
-        <ControlGroup title="ボール自動追加" collapsible>
-          <Range
-            label="X"
-            min={0}
-            max={PROJECTOR_WIDTH}
-            value={ballSpawnX}
-            onChange={setBallSpawnX}
-          />
-          <Range
-            label="Y"
-            min={0}
-            max={PROJECTOR_HEIGHT}
-            value={ballSpawnY}
-            onChange={setBallSpawnY}
-          />
-          <FloatRange
-            label="間隔(秒)"
-            min={0.5}
-            max={30}
-            step={0.5}
-            value={ballSpawnIntervalSec}
-            onChange={setBallSpawnIntervalSec}
-          />
-        </ControlGroup>
       </section>
 
       <section className="workbench">
@@ -1568,7 +1577,7 @@ function drawProjector(
 function drawBall(ctx: CanvasRenderingContext2D, body: Matter.Body) {
   ctx.fillStyle = "#5aa7ff";
   ctx.beginPath();
-  ctx.arc(body.position.x, body.position.y, BALL_RADIUS, 0, Math.PI * 2);
+  ctx.arc(body.position.x, body.position.y, (body as any).circleRadius ?? BALL_RADIUS, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 3;
@@ -1654,12 +1663,14 @@ function drawProjectorBallsOnly(
 function removeOffscreenBalls(engine: Matter.Engine | null, bounds: Bounds) {
   if (!engine) return;
   const balls = Matter.Composite.allBodies(engine.world).filter((body) => body.label === "ball");
-  const offscreen = balls.filter(
-    (ball) =>
-      ball.position.y - BALL_RADIUS > bounds.maxY ||
-      ball.position.x < bounds.minX - BALL_RADIUS ||
-      ball.position.x > bounds.maxX + BALL_RADIUS,
-  );
+  const offscreen = balls.filter((ball) => {
+    const r = (ball as any).circleRadius ?? BALL_RADIUS;
+    return (
+      ball.position.y - r > bounds.maxY ||
+      ball.position.x < bounds.minX - r ||
+      ball.position.x > bounds.maxX + r
+    );
+  });
   if (offscreen.length > 0) {
     Matter.World.remove(engine.world, offscreen);
   }
