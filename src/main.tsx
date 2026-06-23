@@ -561,7 +561,7 @@ function App() {
         previousMarkersRef.current = currentMarkers;
       }
 
-      updateColliderBodies(engineRef.current, currentMarkers, homography, offset);
+      updateColliderBodies(engineRef.current, currentMarkers, homography, offset, calibrationMode, interactionAreaPoints);
       if (engineRef.current) {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
@@ -1408,15 +1408,31 @@ function drawCameraOverlay(
 
 }
 
-function updateColliderBodies(engine: Matter.Engine | null, markers: Marker[], homography: Homography, offset: Point) {
+function updateColliderBodies(
+  engine: Matter.Engine | null,
+  markers: Marker[],
+  homography: Homography,
+  offset: Point,
+  calibrationMode?: "full" | "partial",
+  interactionAreaPoints?: Point[],
+) {
   if (!engine) return;
 
   const bodies = Matter.Composite.allBodies(engine.world).filter((body) => body.label === BODY_LABEL);
   Matter.World.remove(engine.world, bodies);
 
+  const iaPts = calibrationMode === "partial" && interactionAreaPoints?.length === 4 ? interactionAreaPoints : null;
+
   markers.forEach((marker) => {
     const transformed = marker.points.map((point) => transformPoint(point, homography, offset));
     if (transformed.length < 3) return;
+    if (iaPts) {
+      const center = transformed.reduce(
+        (acc, p) => ({ x: acc.x + p.x / transformed.length, y: acc.y + p.y / transformed.length }),
+        { x: 0, y: 0 },
+      );
+      if (!pointInQuad(center, iaPts)) return;
+    }
     const center = transformed.reduce(
       (acc, point) => ({ x: acc.x + point.x / transformed.length, y: acc.y + point.y / transformed.length }),
       { x: 0, y: 0 },
