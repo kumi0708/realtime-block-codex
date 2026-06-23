@@ -341,6 +341,9 @@ function App() {
   const [cvReady, setCvReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>("");
+  const [cameraDropdownOpen, setCameraDropdownOpen] = useState(false);
   const [running, setRunning] = useState(true);
   const [outputWindowOpen, setOutputWindowOpen] = useState(false);
   const [flipX, setFlipX] = useState(false);
@@ -455,14 +458,34 @@ function App() {
   }, [playAreaBounds]);
 
   useEffect(() => {
+    const enumerateCameras = async () => {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === "videoinput");
+        setAvailableCameras(videoDevices);
+        if (videoDevices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(videoDevices[0].deviceId);
+        }
+      } catch {
+        // カメラなし
+      }
+    };
+    enumerateCameras();
+  }, []);
+
+  useEffect(() => {
     let stream: MediaStream | null = null;
     const startCamera = async () => {
       if (!cvReady) return;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: CAMERA_WIDTH, height: CAMERA_HEIGHT, facingMode: "environment" },
-          audio: false,
-        });
+        const videoConstraints: MediaTrackConstraints = { width: CAMERA_WIDTH, height: CAMERA_HEIGHT };
+        if (selectedCameraId) {
+          videoConstraints.deviceId = { exact: selectedCameraId };
+        } else {
+          videoConstraints.facingMode = "environment";
+        }
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
@@ -479,7 +502,7 @@ function App() {
     return () => {
       stream?.getTracks().forEach((track) => track.stop());
     };
-  }, [cvReady]);
+  }, [cvReady, selectedCameraId]);
 
   useEffect(() => {
     const cameraCanvas = cameraCanvasRef.current;
@@ -883,6 +906,35 @@ function App() {
             {demoMode ? <Camera size={18} /> : <FlaskConical size={18} />}
             {demoMode ? "カメラ" : "デモ"}
           </button>
+          {availableCameras.length > 1 && (
+            <div className="camera-select-wrap" style={{ position: "relative" }}>
+              <button
+                type="button"
+                style={{ width: "100%", justifyContent: "space-between" }}
+                onClick={() => setCameraDropdownOpen((v) => !v)}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Camera size={16} />
+                  {availableCameras.find((c) => c.deviceId === selectedCameraId)?.label ||
+                    `カメラ ${availableCameras.findIndex((c) => c.deviceId === selectedCameraId) + 1}`}
+                </span>
+                <ChevronDown size={14} />
+              </button>
+              {cameraDropdownOpen && (
+                <ul className="camera-dropdown-list">
+                  {availableCameras.map((cam, i) => (
+                    <li
+                      key={cam.deviceId}
+                      className={cam.deviceId === selectedCameraId ? "active" : ""}
+                      onClick={() => { setSelectedCameraId(cam.deviceId); setCameraDropdownOpen(false); }}
+                    >
+                      {cam.label || `カメラ ${i + 1}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={outputWindowOpen ? "active" : ""}
