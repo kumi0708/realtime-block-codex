@@ -367,6 +367,7 @@ function App() {
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
+  const [detectFps, setDetectFps] = useState(60);
 
   // ---- 部分認識モード用 state ----
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
@@ -514,6 +515,8 @@ function App() {
     if (!cameraCtx || !projectorCtx) return;
 
     let lastTime = performance.now();
+    let lastDetectTime = 0;
+    const DETECT_INTERVAL = 1000 / detectFps;
     let frames = 0;
     let fpsStart = performance.now();
 
@@ -553,11 +556,12 @@ function App() {
       drawCameraInput(cameraCtx, videoRef.current, demoMode, time);
 
       let currentMarkers = previousMarkersRef.current;
-      if (cvReady && (cameraReady || demoMode)) {
-        currentMarkers = demoMode
+      if (cvReady && (cameraReady || demoMode) && time - lastDetectTime >= DETECT_INTERVAL) {
+        lastDetectTime = time;
+        const detected = demoMode
           ? animatedDemoMarkers(time)
           : detectMarkers(window.cv, cameraCanvas, hue, tolerance, saturation, value, maskCanvasRef.current);
-        currentMarkers = smoothMarkers(previousMarkersRef.current, currentMarkers);
+        currentMarkers = smoothMarkers(previousMarkersRef.current, detected);
         previousMarkersRef.current = currentMarkers;
       }
 
@@ -589,6 +593,7 @@ function App() {
     calibrationMode,
     cameraOverlayOpacity,
     cameraPoints,
+    detectFps,
     cameraReady,
     tool,
     cvReady,
@@ -1130,6 +1135,7 @@ function App() {
         )}
 
         <ControlGroup title="色検出" collapsible>
+          <Range label="検出FPS" min={1} max={60} value={detectFps} onChange={setDetectFps} />
           <Range label="Hue" min={0} max={179} value={hue} onChange={setHue} />
           <Range label="許容幅" min={4} max={45} value={tolerance} onChange={setTolerance} />
           <Range label="彩度" min={0} max={255} value={saturation} onChange={setSaturation} />
