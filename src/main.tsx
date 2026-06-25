@@ -366,6 +366,9 @@ function App() {
   const [saturation, setSaturation] = useState(DEFAULT_COLOR_SETTINGS.saturation);
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const [colliderOffset, setColliderOffset] = useState<Point>({ x: 0, y: 0 });
+  const [ballRestitution, setBallRestitution] = useState(0.94);
+  const [colliderRestitution, setColliderRestitution] = useState(0.86);
   const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
   const [detectFps, setDetectFps] = useState(60);
 
@@ -444,6 +447,7 @@ function App() {
       frictionAir: 0.002,
       label: "ball",
     });
+    (ball as any)._initialBall = true;
     Matter.World.add(world, [leftWall, rightWall, ball]);
     engineRef.current = engine;
     leftWallRef.current = leftWall;
@@ -569,7 +573,7 @@ function App() {
         previousMarkersRef.current = currentMarkers;
       }
 
-      updateColliderBodies(engineRef.current, currentMarkers, homography, offset, calibrationMode, interactionAreaPoints);
+      updateColliderBodies(engineRef.current, currentMarkers, homography, offset, calibrationMode, interactionAreaPoints, colliderOffset, colliderRestitution);
       if (engineRef.current) {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
@@ -608,6 +612,8 @@ function App() {
     hue,
     interactionAreaPoints,
     offset,
+    colliderOffset,
+    colliderRestitution,
     playAreaBounds,
     running,
     saturation,
@@ -691,7 +697,7 @@ function App() {
   const addBallAt = (point: Point) => {
     if (!engineRef.current) return;
     const ball = Matter.Bodies.circle(point.x, point.y, ballSpawnRadius, {
-      restitution: 0.94,
+      restitution: ballRestitution,
       friction: 0.02,
       frictionAir: 0.002,
       label: "ball",
@@ -704,7 +710,7 @@ function App() {
     const id = window.setInterval(() => {
       if (!engineRef.current) return;
       const ball = Matter.Bodies.circle(ballSpawnX, ballSpawnY, ballSpawnRadius, {
-        restitution: 0.94,
+        restitution: ballRestitution,
         friction: 0.02,
         frictionAir: 0.002,
         label: "ball",
@@ -712,13 +718,13 @@ function App() {
       Matter.World.add(engineRef.current.world, ball);
     }, ballSpawnIntervalSec * 1000);
     return () => clearInterval(id);
-  }, [ballSpawnEnabled, running, ballSpawnX, ballSpawnY, ballSpawnIntervalSec, ballSpawnRadius]);
+  }, [ballSpawnEnabled, running, ballSpawnX, ballSpawnY, ballSpawnIntervalSec, ballSpawnRadius, ballRestitution]);
 
   const addColliderAt = (point: Point) => {
     if (!engineRef.current) return;
     const collider = Matter.Bodies.rectangle(point.x, point.y, 110, 34, {
       isStatic: true,
-      restitution: 0.86,
+      restitution: colliderRestitution,
       friction: 0.04,
       label: MANUAL_BODY_LABEL,
     });
@@ -1068,6 +1074,14 @@ function App() {
             value={ballSpawnRadius}
             onChange={setBallSpawnRadius}
           />
+          <FloatRange
+            label="反発係数"
+            min={0}
+            max={1}
+            step={0.01}
+            value={ballRestitution}
+            onChange={setBallRestitution}
+          />
         </ControlGroup>
 
         <ControlGroup title="認識モード" collapsible>
@@ -1112,32 +1126,32 @@ function App() {
         </ControlGroup>
 
         {calibrationMode === "partial" && (
-          <ControlGroup title="Interaction Area">
+          <ControlGroup title="Interaction Area" collapsible>
             <Range
               label="左余白"
               min={0}
-              max={PROJECTOR_WIDTH / 2 - 10}
+              max={1000}
               value={iaMarginLeft}
               onChange={(v) => { setIaMarginLeft(v); applyMargins(v, iaMarginTop, iaMarginRight, iaMarginBottom); }}
             />
             <Range
               label="右余白"
               min={0}
-              max={PROJECTOR_WIDTH / 2 - 10}
+              max={1000}
               value={iaMarginRight}
               onChange={(v) => { setIaMarginRight(v); applyMargins(iaMarginLeft, iaMarginTop, v, iaMarginBottom); }}
             />
             <Range
               label="上余白"
               min={0}
-              max={PROJECTOR_HEIGHT / 2 - 10}
+              max={1000}
               value={iaMarginTop}
               onChange={(v) => { setIaMarginTop(v); applyMargins(iaMarginLeft, v, iaMarginRight, iaMarginBottom); }}
             />
             <Range
               label="下余白"
               min={0}
-              max={PROJECTOR_HEIGHT / 2 - 10}
+              max={1000}
               value={iaMarginBottom}
               onChange={(v) => { setIaMarginBottom(v); applyMargins(iaMarginLeft, iaMarginTop, iaMarginRight, v); }}
             />
@@ -1215,6 +1229,26 @@ function App() {
         <ControlGroup title="投影オフセット" collapsible>
           <Range label="X" min={-160} max={160} value={offset.x} onChange={(x) => setOffset((point) => ({ ...point, x }))} />
           <Range label="Y" min={-120} max={120} value={offset.y} onChange={(y) => setOffset((point) => ({ ...point, y }))} />
+        </ControlGroup>
+
+        <ControlGroup title="コリジョン設定" collapsible>
+          <FloatRange
+            label="反発係数"
+            min={0}
+            max={1}
+            step={0.01}
+            value={colliderRestitution}
+            onChange={setColliderRestitution}
+          />
+          <p className="mode-desc">オフセット（コリジョンのみをずらす）</p>
+          <Range label="X" min={-160} max={160} value={colliderOffset.x} onChange={(x) => setColliderOffset((p) => ({ ...p, x }))} />
+          <Range label="Y" min={-120} max={120} value={colliderOffset.y} onChange={(y) => setColliderOffset((p) => ({ ...p, y }))} />
+          <div className="button-row">
+            <button type="button" onClick={() => setColliderOffset({ x: 0, y: 0 })}>
+              <RotateCcw size={16} />
+              オフセットリセット
+            </button>
+          </div>
         </ControlGroup>
 
         <ControlGroup title="カメラオーバーレイ" collapsible>
@@ -1466,6 +1500,8 @@ function updateColliderBodies(
   offset: Point,
   calibrationMode?: "full" | "partial",
   interactionAreaPoints?: Point[],
+  colliderOffset?: Point,
+  colliderRestitution?: number,
 ) {
   if (!engine) return;
 
@@ -1473,9 +1509,13 @@ function updateColliderBodies(
   Matter.World.remove(engine.world, bodies);
 
   const iaPts = calibrationMode === "partial" && interactionAreaPoints?.length === 4 ? interactionAreaPoints : null;
+  const totalOffset: Point = {
+    x: offset.x + (colliderOffset?.x ?? 0),
+    y: offset.y + (colliderOffset?.y ?? 0),
+  };
 
   markers.forEach((marker) => {
-    const transformed = marker.points.map((point) => transformPoint(point, homography, offset));
+    const transformed = marker.points.map((point) => transformPoint(point, homography, totalOffset));
     if (transformed.length < 3) return;
     if (iaPts) {
       const center = transformed.reduce(
@@ -1491,7 +1531,7 @@ function updateColliderBodies(
     const vertices = transformed.map((point) => ({ x: point.x - center.x, y: point.y - center.y }));
     const body = Matter.Bodies.fromVertices(center.x, center.y, [vertices], {
       isStatic: true,
-      restitution: 0.86,
+      restitution: colliderRestitution ?? 0.86,
       friction: 0.04,
       label: BODY_LABEL,
     });
