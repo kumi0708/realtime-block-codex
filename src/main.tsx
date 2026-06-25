@@ -373,6 +373,10 @@ function App() {
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
   const [interactionAreaPoints, setInteractionAreaPoints] = useState<Point[]>(defaultInteractionAreaPoints);
   const [showInteractionArea, setShowInteractionArea] = useState(true);
+  const [iaMarginLeft, setIaMarginLeft] = useState(160);
+  const [iaMarginTop, setIaMarginTop] = useState(90);
+  const [iaMarginRight, setIaMarginRight] = useState(160);
+  const [iaMarginBottom, setIaMarginBottom] = useState(90);
   // --------------------------------
 
   const homography = useMemo(
@@ -535,7 +539,7 @@ function App() {
         drawInteractionAreaBorder(outCtx, interactionAreaPoints.length === 4 ? interactionAreaPoints : defaultInteractionAreaPoints, flipX, flipY);
       }
       if (tool === "calibrate") {
-        drawCalibrationMarkers(outCtx, flipX, flipY);
+        drawCalibrationMarkers(outCtx, flipX, flipY, calibrationMode, interactionAreaPoints);
       }
     };
 
@@ -719,6 +723,15 @@ function App() {
       label: MANUAL_BODY_LABEL,
     });
     Matter.World.add(engineRef.current.world, collider);
+  };
+
+  const applyMargins = (left: number, top: number, right: number, bottom: number) => {
+    setInteractionAreaPoints([
+      { x: left, y: top },
+      { x: PROJECTOR_WIDTH - right, y: top },
+      { x: PROJECTOR_WIDTH - right, y: PROJECTOR_HEIGHT - bottom },
+      { x: left, y: PROJECTOR_HEIGHT - bottom },
+    ]);
   };
 
   const clearManualColliders = () => {
@@ -1100,6 +1113,34 @@ function App() {
 
         {calibrationMode === "partial" && (
           <ControlGroup title="Interaction Area">
+            <Range
+              label="左余白"
+              min={0}
+              max={PROJECTOR_WIDTH / 2 - 10}
+              value={iaMarginLeft}
+              onChange={(v) => { setIaMarginLeft(v); applyMargins(v, iaMarginTop, iaMarginRight, iaMarginBottom); }}
+            />
+            <Range
+              label="右余白"
+              min={0}
+              max={PROJECTOR_WIDTH / 2 - 10}
+              value={iaMarginRight}
+              onChange={(v) => { setIaMarginRight(v); applyMargins(iaMarginLeft, iaMarginTop, v, iaMarginBottom); }}
+            />
+            <Range
+              label="上余白"
+              min={0}
+              max={PROJECTOR_HEIGHT / 2 - 10}
+              value={iaMarginTop}
+              onChange={(v) => { setIaMarginTop(v); applyMargins(iaMarginLeft, v, iaMarginRight, iaMarginBottom); }}
+            />
+            <Range
+              label="下余白"
+              min={0}
+              max={PROJECTOR_HEIGHT / 2 - 10}
+              value={iaMarginBottom}
+              onChange={(v) => { setIaMarginBottom(v); applyMargins(iaMarginLeft, iaMarginTop, iaMarginRight, v); }}
+            />
             <div className="button-row">
               <button
                 type="button"
@@ -1110,11 +1151,15 @@ function App() {
                 }}
               >
                 <Crosshair size={16} />
-                4点設定
+                4点手動設定
               </button>
               <button
                 type="button"
                 onClick={() => {
+                  setIaMarginLeft(160);
+                  setIaMarginTop(90);
+                  setIaMarginRight(160);
+                  setIaMarginBottom(90);
                   setInteractionAreaPoints(defaultInteractionAreaPoints);
                   setTool("none");
                 }}
@@ -1549,14 +1594,20 @@ function drawProjector(
   }
 
   if (calibrating || cameraPoints.length < 4) {
-    projectorCorners.forEach((point, index) => {
+    const calibTargets =
+      calibrationMode === "partial" && interactionAreaPoints && interactionAreaPoints.length === 4
+        ? interactionAreaPoints
+        : projectorCorners;
+    calibTargets.forEach((point, index) => {
+      const px = point.x || 24;
+      const py = point.y || 24;
       ctx.fillStyle = "#ffdf63";
       ctx.beginPath();
-      ctx.arc(point.x || 24, point.y || 24, 13, 0, Math.PI * 2);
+      ctx.arc(px, py, 13, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#10151f";
       ctx.font = "bold 15px system-ui";
-      ctx.fillText(String(index + 1), (point.x || 24) - 4, (point.y || 24) + 5);
+      ctx.fillText(String(index + 1), px - 4, py + 5);
     });
   }
 
@@ -1650,10 +1701,22 @@ function drawInteractionAreaBorder(
   ctx.restore();
 }
 
-function drawCalibrationMarkers(ctx: CanvasRenderingContext2D, flipX: boolean, flipY: boolean) {
-  projectorCorners.forEach((point, index) => {
-    const px = (flipX ? PROJECTOR_WIDTH - point.x : point.x) || 24;
-    const py = (flipY ? PROJECTOR_HEIGHT - point.y : point.y) || 24;
+function drawCalibrationMarkers(
+  ctx: CanvasRenderingContext2D,
+  flipX: boolean,
+  flipY: boolean,
+  calibrationMode?: "full" | "partial",
+  interactionAreaPoints?: Point[],
+) {
+  const targets =
+    calibrationMode === "partial" && interactionAreaPoints && interactionAreaPoints.length === 4
+      ? interactionAreaPoints
+      : projectorCorners;
+  targets.forEach((point, index) => {
+    const rawX = flipX ? PROJECTOR_WIDTH - point.x : point.x;
+    const rawY = flipY ? PROJECTOR_HEIGHT - point.y : point.y;
+    const px = rawX || 24;
+    const py = rawY || 24;
     ctx.fillStyle = "#ffdf63";
     ctx.beginPath();
     ctx.arc(px, py, 13, 0, Math.PI * 2);
