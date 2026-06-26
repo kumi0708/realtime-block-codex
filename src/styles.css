@@ -269,11 +269,13 @@ button.active:hover {
 
 .workbench {
   min-width: 0;
+  min-height: 0;
   border-radius: 8px;
   padding: 16px;
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 14px;
+  overflow-y: auto;
 }
 
 .stage-toolbar {

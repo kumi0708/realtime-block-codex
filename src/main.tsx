@@ -7,6 +7,8 @@ import {
   CirclePlus,
   Crosshair,
   Eraser,
+  Eye,
+  EyeOff,
   FlaskConical,
   FlipHorizontal,
   FlipVertical,
@@ -336,6 +338,7 @@ function App() {
   const rightWallRef = useRef<Matter.Body | null>(null);
   const frameRef = useRef(0);
   const previousMarkersRef = useRef<Marker[]>([]);
+  const prevColliderMarkersRef = useRef<Marker[]>([]);
   const outputWindowRef = useRef<Window | null>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [cvReady, setCvReady] = useState(false);
@@ -371,6 +374,8 @@ function App() {
   const [colliderRestitution, setColliderRestitution] = useState(0.86);
   const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
   const [detectFps, setDetectFps] = useState(60);
+  const [previewVisible, setPreviewVisible] = useState(true);
+  const [diffColliderUpdate, setDiffColliderUpdate] = useState(false);
 
   // ---- 部分認識モード用 state ----
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
@@ -547,13 +552,17 @@ function App() {
       }
     };
 
+    prevColliderMarkersRef.current = [];
+
     const loop = (time: number) => {
       frameRef.current = requestAnimationFrame(loop);
       if (!running) {
-        if (testPattern) {
-          drawTestPattern(projectorCtx);
-        } else {
-          drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+        if (previewVisible) {
+          if (testPattern) {
+            drawTestPattern(projectorCtx);
+          } else {
+            drawProjector(projectorCtx, engineRef.current, markers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+          }
         }
         renderOutputWindow();
         return;
@@ -573,17 +582,29 @@ function App() {
         previousMarkersRef.current = currentMarkers;
       }
 
-      updateColliderBodies(engineRef.current, currentMarkers, homography, offset, calibrationMode, interactionAreaPoints, colliderOffset, colliderRestitution);
+      const shouldUpdateColliders =
+        !diffColliderUpdate ||
+        prevColliderMarkersRef.current.length !== currentMarkers.length ||
+        currentMarkers.some((m, i) => {
+          const prev = prevColliderMarkersRef.current[i];
+          return !prev || Math.hypot(m.center.x - prev.center.x, m.center.y - prev.center.y) > 2;
+        });
+      if (shouldUpdateColliders) {
+        prevColliderMarkersRef.current = currentMarkers;
+        updateColliderBodies(engineRef.current, currentMarkers, homography, offset, calibrationMode, interactionAreaPoints, colliderOffset, colliderRestitution);
+      }
       if (engineRef.current) {
         Matter.Engine.update(engineRef.current, delta);
         removeOffscreenBalls(engineRef.current, playAreaBounds);
       }
-      if (testPattern) {
-        drawTestPattern(projectorCtx);
-      } else {
-        drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+      if (previewVisible) {
+        if (testPattern) {
+          drawTestPattern(projectorCtx);
+        } else {
+          drawProjector(projectorCtx, engineRef.current, currentMarkers, homography, offset, tool, cameraPoints, calibrationMode, interactionAreaPoints, showInteractionArea, videoRef.current, cameraOverlayOpacity);
+        }
+        drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool);
       }
-      drawCameraOverlay(cameraCtx, currentMarkers, cameraPoints, tool);
       renderOutputWindow();
 
       frames += 1;
@@ -621,6 +642,8 @@ function App() {
     testPattern,
     tolerance,
     value,
+    previewVisible,
+    diffColliderUpdate,
   ]);
 
   useEffect(() => {
@@ -922,6 +945,7 @@ function App() {
           <span>{status}</span>
         </div>
 
+        <ControlGroup title="操作" collapsible>
         <div className="button-grid">
           <button type="button" onClick={() => setRunning((value) => !value)}>
             {running ? <Pause size={18} /> : <Play size={18} />}
@@ -930,6 +954,15 @@ function App() {
           <button type="button" onClick={() => setDemoMode((value) => !value)}>
             {demoMode ? <Camera size={18} /> : <FlaskConical size={18} />}
             {demoMode ? "カメラ" : "デモ"}
+          </button>
+          <button
+            type="button"
+            style={{ gridColumn: "span 2" }}
+            className={!previewVisible ? "active" : ""}
+            onClick={() => setPreviewVisible((v) => !v)}
+          >
+            {previewVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+            {previewVisible ? "プレビューOFF" : "プレビューON"}
           </button>
           {availableCameras.length > 1 && (
             <div className="camera-select-wrap" style={{ position: "relative" }}>
@@ -1036,6 +1069,7 @@ function App() {
             コリジョン消去
           </button>
         </div>
+        </ControlGroup>
 
         <div className="meter-grid">
           <Metric label="FPS" value={fps} />
@@ -1248,6 +1282,14 @@ function App() {
               <RotateCcw size={16} />
               オフセットリセット
             </button>
+            <button
+              type="button"
+              className={diffColliderUpdate ? "active" : ""}
+              onClick={() => setDiffColliderUpdate((v) => !v)}
+              style={{ gridColumn: "span 2" }}
+            >
+              {diffColliderUpdate ? "差分更新ON" : "差分更新OFF"}
+            </button>
           </div>
         </ControlGroup>
 
@@ -1264,7 +1306,7 @@ function App() {
 
       </section>
 
-      <section className="workbench">
+      <section className="workbench" style={{ display: previewVisible ? undefined : "none" }}>
         <div className="stage-toolbar">
           <div>
             <h2>Projector Output</h2>
