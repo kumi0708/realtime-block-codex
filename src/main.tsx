@@ -9,6 +9,8 @@ import {
   Eraser,
   Eye,
   EyeOff,
+  Volume2,
+  VolumeOff,
   FlaskConical,
   FlipHorizontal,
   FlipVertical,
@@ -339,6 +341,8 @@ function App() {
   const frameRef = useRef(0);
   const previousMarkersRef = useRef<Marker[]>([]);
   const prevColliderMarkersRef = useRef<Marker[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const soundEnabledRef = useRef(true);
   const outputWindowRef = useRef<Window | null>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [cvReady, setCvReady] = useState(false);
@@ -370,12 +374,14 @@ function App() {
   const [value, setValue] = useState(DEFAULT_COLOR_SETTINGS.value);
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [colliderOffset, setColliderOffset] = useState<Point>({ x: 0, y: 0 });
-  const [ballRestitution, setBallRestitution] = useState(0.94);
-  const [colliderRestitution, setColliderRestitution] = useState(0.86);
+  const [ballRestitution, setBallRestitution] = useState(0.82);
+  const [colliderRestitution, setColliderRestitution] = useState(0.72);
+  const [gravity, setGravity] = useState(0.4);
   const [cameraOverlayOpacity, setCameraOverlayOpacity] = useState(0.4);
   const [detectFps, setDetectFps] = useState(60);
   const [previewVisible, setPreviewVisible] = useState(true);
   const [diffColliderUpdate, setDiffColliderUpdate] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // ---- 部分認識モード用 state ----
   const [calibrationMode, setCalibrationMode] = useState<"full" | "partial">("full");
@@ -436,7 +442,7 @@ function App() {
 
   useEffect(() => {
     const engine = Matter.Engine.create();
-    engine.gravity.y = 0.95;
+    engine.gravity.y = 0.4;
     const world = engine.world;
     const leftWall = Matter.Bodies.rectangle(-24, PROJECTOR_HEIGHT / 2, 48, PROJECTOR_HEIGHT, {
       isStatic: true,
@@ -447,9 +453,9 @@ function App() {
       label: "right-wall",
     });
     const ball = Matter.Bodies.circle(220, 100, BALL_RADIUS, {
-      restitution: 0.94,
+      restitution: 0.82,
       friction: 0.02,
-      frictionAir: 0.002,
+      frictionAir: 0.01,
       label: "ball",
     });
     (ball as any)._initialBall = true;
@@ -458,13 +464,41 @@ function App() {
     leftWallRef.current = leftWall;
     rightWallRef.current = rightWall;
 
+    const hitLabels = new Set([BODY_LABEL, MANUAL_BODY_LABEL, "left-wall", "right-wall"]);
+    const handleCollision = (event: Matter.IEventCollision<Matter.Engine>) => {
+      let hitCollider = false;
+      let hitBall = false;
+      for (const pair of event.pairs) {
+        const { bodyA, bodyB } = pair;
+        if (!hitBall && bodyA.label === "ball" && bodyB.label === "ball") {
+          hitBall = true;
+        } else if (!hitCollider && (
+          (bodyA.label === "ball" && hitLabels.has(bodyB.label)) ||
+          (bodyB.label === "ball" && hitLabels.has(bodyA.label))
+        )) {
+          hitCollider = true;
+        }
+      }
+      if (soundEnabledRef.current) {
+        if (hitCollider) playArkanoidBeep(audioCtxRef);
+        if (hitBall) playBallBallBeep(audioCtxRef);
+      }
+    };
+    Matter.Events.on(engine, "collisionStart", handleCollision);
+
     return () => {
+      Matter.Events.off(engine, "collisionStart", handleCollision);
       Matter.Engine.clear(engine);
       engineRef.current = null;
       leftWallRef.current = null;
       rightWallRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!engineRef.current) return;
+    engineRef.current.gravity.y = gravity;
+  }, [gravity]);
 
   useEffect(() => {
     if (!leftWallRef.current || !rightWallRef.current) return;
@@ -647,6 +681,10 @@ function App() {
   ]);
 
   useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
     if (!demoMode) return;
     const ctx = maskCanvasRef.current?.getContext("2d");
     ctx?.clearRect(0, 0, CAMERA_WIDTH, CAMERA_HEIGHT);
@@ -722,7 +760,7 @@ function App() {
     const ball = Matter.Bodies.circle(point.x, point.y, ballSpawnRadius, {
       restitution: ballRestitution,
       friction: 0.02,
-      frictionAir: 0.002,
+      frictionAir: 0.01,
       label: "ball",
     });
     Matter.World.add(engineRef.current.world, ball);
@@ -735,7 +773,7 @@ function App() {
       const ball = Matter.Bodies.circle(ballSpawnX, ballSpawnY, ballSpawnRadius, {
         restitution: ballRestitution,
         friction: 0.02,
-        frictionAir: 0.002,
+        frictionAir: 0.01,
         label: "ball",
       });
       Matter.World.add(engineRef.current.world, ball);
@@ -964,6 +1002,15 @@ function App() {
             {previewVisible ? <EyeOff size={18} /> : <Eye size={18} />}
             {previewVisible ? "プレビューOFF" : "プレビューON"}
           </button>
+          <button
+            type="button"
+            style={{ gridColumn: "span 2" }}
+            className={soundEnabled ? "active" : ""}
+            onClick={() => setSoundEnabled((v) => !v)}
+          >
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeOff size={18} />}
+            {soundEnabled ? "サウンドON" : "サウンドOFF"}
+          </button>
           {availableCameras.length > 1 && (
             <div className="camera-select-wrap" style={{ position: "relative" }}>
               <button
@@ -1115,6 +1162,14 @@ function App() {
             step={0.01}
             value={ballRestitution}
             onChange={setBallRestitution}
+          />
+          <FloatRange
+            label="重力"
+            min={0}
+            max={2}
+            step={0.05}
+            value={gravity}
+            onChange={setGravity}
           />
         </ControlGroup>
 
@@ -1841,6 +1896,54 @@ function removeOffscreenBalls(engine: Matter.Engine | null, bounds: Bounds) {
   if (offscreen.length > 0) {
     Matter.World.remove(engine.world, offscreen);
   }
+}
+
+function playBallBallBeep(audioCtxRef: React.MutableRefObject<AudioContext | null>) {
+  if (!audioCtxRef.current) {
+    audioCtxRef.current = new AudioContext();
+  }
+  const ctx = audioCtxRef.current;
+  if (ctx.state === "suspended") ctx.resume();
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  // サイン波でやわらかい「ボコッ」感。ピッチを低めに落とす
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(320, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(160, ctx.currentTime + 0.12);
+
+  gain.gain.setValueAtTime(0.22, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14);
+
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.14);
+}
+
+function playArkanoidBeep(audioCtxRef: React.MutableRefObject<AudioContext | null>) {
+  if (!audioCtxRef.current) {
+    audioCtxRef.current = new AudioContext();
+  }
+  const ctx = audioCtxRef.current;
+  if (ctx.state === "suspended") ctx.resume();
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.type = "square";
+  // 660Hz → 440Hz へ素早くピッチダウン（アルカノイド的な打撃音）
+  osc.frequency.setValueAtTime(660, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.05);
+
+  gain.gain.setValueAtTime(0.18, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.08);
 }
 
 const rootElement = document.getElementById("root");
